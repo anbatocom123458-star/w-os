@@ -1,0 +1,73 @@
+workflows:
+  ios-simulator-build:
+    name: wOS - iOS Simulator Build (no signing required)
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
+      vars:
+        XCODE_PROJECT: "wOS.xcodeproj"
+        XCODE_SCHEME: "wOS"
+    scripts:
+      - name: Install XcodeGen
+        script: |
+          brew install xcodegen
+      - name: Generate Xcode project from project.yml
+        script: |
+          xcodegen generate
+      - name: Build for iOS Simulator
+        script: |
+          xcodebuild build \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 15,OS=latest' \
+            CODE_SIGNING_ALLOWED=NO
+    artifacts:
+      - build/**/*.app
+      - build/**/*.xcresult
+
+  ios-device-release:
+    name: wOS - iOS Device Release (requires signing)
+    max_build_duration: 90
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
+      # Configure these in Codemagic UI -> Teams -> Code signing identities,
+      # then reference the group name below (see README.md "Codemagic setup").
+      groups:
+        - ios_signing
+      vars:
+        XCODE_PROJECT: "wOS.xcodeproj"
+        XCODE_SCHEME: "wOS"
+        BUNDLE_ID: "com.wos.app"
+    scripts:
+      - name: Install XcodeGen
+        script: |
+          brew install xcodegen
+      - name: Generate Xcode project from project.yml
+        script: |
+          xcodegen generate
+      - name: Set up code signing (App Store Connect API key)
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+          keychain add-certificates
+          xcode-project use-profiles
+      - name: Build & archive .ipa
+        script: |
+          xcode-project build-ipa \
+            --project "$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - "/tmp/xcodebuild_logs/*.log"
+    publishing:
+      email:
+        recipients:
+          - user@example.com
+        notify:
+          success: true
+          failure: true
