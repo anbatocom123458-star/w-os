@@ -4,7 +4,7 @@ workflows:
     max_build_duration: 30
     instance_type: mac_mini_m1
     environment:
-      xcode: latest
+      xcode: 15.4
       vars:
         XCODE_PROJECT: "wOS.xcodeproj"
         XCODE_SCHEME: "wOS"
@@ -12,7 +12,7 @@ workflows:
       - name: Fetching app sources
         script: |
           echo "Fetching app sources..."
-      
+
       - name: Install XcodeGen
         script: |
           brew install xcodegen
@@ -27,7 +27,7 @@ workflows:
             -project "$XCODE_PROJECT" \
             -scheme "$XCODE_SCHEME" \
             -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,name=Any iOS Simulator Device' \
+            -destination 'generic/platform=iOS Simulator' \
             ARCHS=arm64 \
             EXCLUDED_ARCHS=x86_64 \
             ONLY_ACTIVE_ARCH=YES \
