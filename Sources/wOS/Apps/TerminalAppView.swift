@@ -71,8 +71,9 @@ struct TerminalAppView: View {
             if !appId.isEmpty { systemState.openApp(appId); history.append("Opening \(appId)...") }
             else { history.append("Usage: open <app-name>") }
         case "install":
-            history.append("Installing from file...")
-            history.append("Supported: source archive, repo URL")
+            history.append("This terminal is a command simulator — it does not install packages.")
+            history.append("Use the Files app to import files, or the App Store to add applications.")
+            history.append("No archive or repository installation is performed from this terminal.")
         case "help":
             history.append(helpText)
         case "pwd": history.append("/home/user")
@@ -112,7 +113,7 @@ struct TerminalAppView: View {
       shutdown   - Lock screen
       lock       - Lock screen
       open       - Open an app (e.g. open calculator, open appstore)
-      install    - Install app from file
+      install    - Explained: not a real installer (see output when run)
       exit       - Close terminal
     """
 

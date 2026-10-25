@@ -135,7 +135,7 @@ struct NotesAppView: View {
         guard !title.trimmingCharacters(in: .whitespaces).isEmpty || !content.trimmingCharacters(in: .whitespaces).isEmpty else {
             isEditing = false; return
         }
-        let existingCloudId = editingIndex != nil ? notes[editingIndex!].cloudId : nil
+        let existingCloudId = editingIndex.flatMap { notes[$0].cloudId }
         CloudSyncService.shared.pushNote(RemoteNote(id: existingCloudId ?? UUID().uuidString, title: title, content: content)) { _ in }
 
         if let idx = editingIndex {

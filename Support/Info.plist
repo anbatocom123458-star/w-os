@@ -51,7 +51,10 @@
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
-		<true/>
+		<false/>
+		<!-- CloudSyncService talks to a user-configured server; require HTTPS.
+             If a user configures an http base URL, requests fail soft and the
+             app keeps working with local/offline data. -->
 	</dict>
 </dict>
 </plist>

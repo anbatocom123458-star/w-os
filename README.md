@@ -62,7 +62,9 @@ logic gốc, cộng thêm các tính năng mới được yêu cầu.
 ```
 wOS/
 ├── project.yml          <- cấu hình XcodeGen, sinh ra wOS.xcodeproj
-├── codemagic.yaml        <- CI/CD pipeline cho Codemagic
+├── .github/workflows/   <- GitHub Actions CI/CD (thay thế Codemagic)
+│   ├── ci.yml           <- build unsigned, chạy thử nghiệm, đóng gói artifact
+│   └── release-ipa.yml  <- xuất IPA đã ký (tùy chọn, cần bí mật ký tên)
 ├── Support/Info.plist    <- Info.plist (khai báo URL schemes cho Linking)
 └── Sources/wOS/
     ├── wOSApp.swift
@@ -76,39 +78,64 @@ wOS/
     └── Resources/Assets.xcassets/  (5 wallpaper image sets)
 ```
 
-## Build & chạy trên Codemagic
+## Build & chạy trên GitHub Actions
 
-Dự án **không** commit sẵn file `.xcodeproj` — Codemagic sẽ tự sinh ra bằng
+Dự án **không** commit sẵn file `.xcodeproj` — GitHub Actions sẽ tự sinh ra bằng
 [XcodeGen](https://github.com/yonaskolb/XcodeGen) từ `project.yml` mỗi lần
-build, nên không bao giờ bị lỗi UUID / conflict project file khi nhiều người
-cùng sửa.
+build.
 
-1. Đẩy toàn bộ thư mục này (`wOS/`) lên một Git repo (GitHub/GitLab/Bitbucket).
-2. Trên Codemagic: **Add application** → chọn repo đó → Codemagic tự động
-   đọc `codemagic.yaml`.
-3. Chọn workflow:
-   - `ios-simulator-build`: build ngay, **không cần** chữ ký (code signing),
-     dùng để kiểm tra biên dịch nhanh trên Simulator. Chạy ổn định ngay lần
-     đầu.
-   - `ios-device-release`: build ra file `.ipa` thật để cài lên thiết bị/TestFlight —
-     cần cấu hình **Code signing identity** (App Store Connect API key) trong
-     Codemagic UI trước, đặt vào group `ios_signing` được tham chiếu trong
-     `codemagic.yaml`.
-4. Bấm **Start new build**.
+### Workflows
 
-## Build cục bộ (máy Mac có Xcode)
+- `.github/workflows/ci.yml` — chạy trên mỗi `push` đến `main`, mỗi `pull_request`,
+  và có thể kích hoạt bằng `workflow_dispatch`:
+  - Kiểm tra phiên bản Xcode / Swift.
+  - Sinh Xcode project qua `xcodegen generate`.
+  - Build thực trên thiết bị iOS generic (`iphonesimulator` không dùng cho build chính),
+    cả thiết bị và Simulator, **không cần ký** (`CODE_SIGNING_ALLOWED=NO`).
+  - Chạy unit tests trên Simulator.
+  - Đóng gói `.app` chưa ký và log build, upload artifacts (giữ 30 ngày).
+- `.github/workflows/release-ipa.yml` — chạy khi release được publish hoặc qua
+  `workflow_dispatch`:
+  - Build không ký (artifact xác nhận biên dịch).
+  - Xuất IPA đã ký **tùy chọn**, chỉ khi các bí mật ký tên được cấu hình:
+    `IOS_SIGNING_CERTIFICATE`, `IOS_SIGNING_CERTIFICATE_PASSWORD`,
+    `IOS_PROVISIONING_PROFILE` trong GitHub Actions Secrets.
+  - Dùng keychain tạm, làm sạch sau khi xong, không in ra giá trị bí mật.
+  - Xác thực chữ ký của `.ipa` trước khi upload.
+
+### Cách build cục bộ (máy Mac có Xcode)
 
 ```bash
 brew install xcodegen
 cd wOS
 xcodegen generate
 open wOS.xcodeproj
+# Chọn scheme "wOS", build cho Generic iOS Device hoặc Simulator.
 ```
+
+### Bí mật ký tên (chỉ cần cho IPA đã ký)
+
+Trong repo GitHub → Settings → Secrets and variables → Actions, thêm:
+
+- `IOS_SIGNING_CERTIFICATE` — nội dung file `.p12`, mã hóa base64.
+- `IOS_SIGNING_CERTIFICATE_PASSWORD` — mật khẩu file `.p12`.
+- `IOS_PROVISIONING_PROFILE` — nội dung file `.mobileprovision`, mã hóa base64.
+
+Tùy chọn: `APP_STORE_CONNECT_API_KEY` nếu muốn triển khai lên TestFlight/App Store Connect
+sau khi xuất IPA (workflow hiện tại chỉ xuất và xác thực IPA, không tự động upload).
+
+Chi tiết xem `docs/BUILD_IOS.md`.
 
 ## Ghi chú kỹ thuật
 
-- Yêu cầu iOS 16.0+ (SwiftUI `TextEditor.scrollContentBackground`, `Slider`,
-  `fileImporter`, `confirmationDialog`...).
+- Yêu cầu iOS 17.0 (xem `project.yml` deployment target).
+- `LinkingService` mở app thật qua URL scheme / https — không giả lập, giống
+  hành vi gốc của `linking.js`. Các scheme cần dùng đã khai báo trong
+  `LSApplicationQueriesSchemes` (`Support/Info.plist`) để `canOpenURL` hoạt
+  động đúng trên iOS.
+- `CloudSyncService` fail-soft giống `api.js`: nếu chưa cấu hình server (Cài
+  đặt > Dữ liệu đám mây) thì toàn bộ tính năng (Ghi chú, Thư viện App) tự
+  dùng dữ liệu offline có sẵn, không bao giờ crash app.
 - `LinkingService` mở app thật qua URL scheme / https — không giả lập, giống
   hành vi gốc của `linking.js`. Các scheme cần dùng đã khai báo trong
   `LSApplicationQueriesSchemes` (`Support/Info.plist`) để `canOpenURL` hoạt

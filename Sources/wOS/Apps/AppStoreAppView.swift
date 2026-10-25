@@ -95,7 +95,7 @@ struct AppStoreAppView: View {
             "cache": ("Dữ liệu đã lưu", .wosWarning, "icloud.slash.fill"),
             "offline": ("Danh mục mặc định", Color(hex: "6b7280"), "icloud.slash"),
         ]
-        let (label, color, symbol) = map[source] ?? map["offline"]!
+        let (label, color, symbol) = map[source] ?? map["offline"] ?? ("Danh mục mặc định", Color(hex: "6b7280"), "icloud.slash")
         return HStack(spacing: 4) {
             Image(systemName: symbol).font(.system(size: 10)).foregroundColor(color)
             Text(label).font(.system(size: 10, weight: .semibold)).foregroundColor(color)

@@ -175,8 +175,12 @@ final class SystemState: ObservableObject {
         let icon = registry?.icon ?? IconRef(symbol: "app.fill")
         let color = registry?.color ?? .wosPanelAlt
         let offset = CGFloat(windows.count % 5) * 16
+        let screenWidth = UIScreen.main.bounds.width
         let win = WindowInstance(appId: appId, title: title, icon: icon, color: color,
-                                  x: 24 + offset, y: 90 + offset)
+                                  x: min(24 + offset, max(0, screenWidth - 340 - 24)),
+                                  y: 90 + offset,
+                                  width: min(340, screenWidth - 32),
+                                  height: min(480, UIScreen.main.bounds.height - 100))
         windows.append(win)
         frontWindowId = win.id
     }

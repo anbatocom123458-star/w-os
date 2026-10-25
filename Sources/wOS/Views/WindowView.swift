@@ -33,11 +33,20 @@ struct WindowView: View {
         .position(x: posX, y: posY)
         .gesture(
             DragGesture()
-                .onChanged { dragOffset = $0.translation }
+                .onChanged { value in
+                    guard !window.maximized else { return }
+                    dragOffset = $0.translation
+                }
                 .onEnded { value in
+                    guard !window.maximized else { return }
                     window.x += value.translation.width
                     window.y += value.translation.height
                     dragOffset = .zero
+                    // Keep the window inside the screen so it can never be
+                    // dragged off-reach on small iPhones.
+                    let screenSize = UIScreen.main.bounds.size
+                    window.x = max(0, min(window.x, screenSize.width - window.width))
+                    window.y = max(0, min(window.y, screenSize.height - window.height))
                 }
         )
         .onTapGesture { systemState.bringToFront(window.id) }

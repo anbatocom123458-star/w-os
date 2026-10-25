@@ -1,0 +1,127 @@
+name: CI — build and test wOS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  XCODE_PROJECT: wOS.xcodeproj
+  XCODE_SCHEME: wOS
+  TEST_SCHEME: wOSTests
+  DERIVED_DATA: ${{ runner.temp }}/DerivedData
+
+jobs:
+  ci:
+    name: Build, test, and package unsigned artifacts
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show Xcode and Swift versions
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project from project.yml
+        run: xcodegen generate
+
+      - name: Validate generated project and discover schemes
+        run: |
+          test -f "$XCODE_PROJECT/project.pbxproj" || { echo "Xcode project was not generated" >&2; exit 1; }
+          xcodebuild -list -project "$XCODE_PROJECT"
+
+      - name: Show resolved build settings
+        run: |
+          xcodebuild -project "$XCODE_PROJECT" -scheme "$XCODE_SCHEME" -showBuildSettings \
+            | grep -E 'PRODUCT_BUNDLE_IDENTIFIER|SDKROOT|IPHONEOS_DEPLOYMENT_TARGET|CODE_SIGNING_ALLOWED' || true
+
+      - name: Build archive for generic iOS device (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -configuration Release \
+            -archivePath "${DERIVED_DATA}/device/wOS.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            ONLY_ACTIVE_ARCH=NO \
+            2>&1 | tee "${{ runner.temp }}/build-device.log"
+
+      - name: Package unsigned .ipa from archive
+        run: |
+          set -o pipefail
+          ARCHIVE_PATH="${DERIVED_DATA}/device/wOS.xcarchive"
+          APP_PATH=$(find "$ARCHIVE_PATH/Products/Applications" -name '*.app' -maxdepth 1 | head -1)
+          if [ -z "$APP_PATH" ]; then echo "No .app bundle found in archive" >&2; exit 1; fi
+          APP_NAME=$(basename "$APP_PATH")
+          PAYLOAD_DIR="${{ runner.temp }}/Payload"
+          rm -rf "$PAYLOAD_DIR"
+          mkdir -p "$PAYLOAD_DIR"
+          cp -R "$APP_PATH" "$PAYLOAD_DIR/"
+          cd "$PAYLOAD_DIR"
+          zip -r "${{ runner.temp }}/wOS-unsigned.ipa" "$APP_NAME"
+          unzip -t "${{ runner.temp }}/wOS-unsigned.ipa" >/dev/null && echo "unsigned .ipa valid"
+
+      - name: Build for iOS Simulator (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            -derivedDataPath "$DERIVED_DATA/simulator" \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee "${{ runner.temp }}/build-simulator.log"
+
+      - name: Run unit tests (Simulator)
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project "$XCODE_PROJECT" \
+            -scheme "$TEST_SCHEME" \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,OS=latest,name=iPhone 15' \
+            -configuration Debug \
+            -derivedDataPath "$DERIVED_DATA/tests" \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee "${{ runner.temp }}/test.log"
+
+      - name: Package unsigned simulator .app
+        run: |
+          APP_PATH=$(find "$DERIVED_DATA/simulator" -name '*.app' -maxdepth 8 | head -1)
+          if [ -z "$APP_PATH" ]; then echo "No simulator .app bundle was produced" >&2; exit 1; fi
+          ditto -c -k --keepParent "$APP_PATH" "${{ runner.temp }}/wOS-unsigned-simulator-app.zip"
+          unzip -t "${{ runner.temp }}/wOS-unsigned-simulator-app.zip" >/dev/null && echo "simulator .app archive valid"
+
+      - name: Upload unsigned build artifacts and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wOS-unsigned-build
+          path: |
+            ${{ runner.temp }}/wOS-unsigned.ipa
+            ${{ runner.temp }}/wOS-unsigned-simulator-app.zip
+            ${{ runner.temp }}/build-device.log
+            ${{ runner.temp }}/build-simulator.log
+            ${{ runner.temp }}/test.log
+          retention-days: 30
+          if-no-files-found: error

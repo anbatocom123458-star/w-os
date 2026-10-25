@@ -6,10 +6,17 @@ import WebKit
 
 struct BrowserAppView: View {
     @State private var inputUrl = "https://www.google.com"
-    @State private var currentUrl = URL(string: "https://www.google.com")!
+    @State private var currentUrl: URL = BrowserAppView.homeURL
     @State private var canGoBack = false
     @State private var canGoForward = false
     @State private var webView = WKWebView()
+
+    private static let homeURL: URL = {
+        guard let url = URL(string: "https://www.google.com") else {
+            preconditionFailure("Invalid hard-coded home URL")
+        }
+        return url
+    }()
 
     var body: some View {
         VStack(spacing: 0) {

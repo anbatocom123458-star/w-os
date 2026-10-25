@@ -57,7 +57,7 @@ struct UpdateAppView: View {
 
             Spacer()
 
-            Text("Được build & phân phối qua Codemagic CI/CD.")
+            Text("Được build & phân phối qua GitHub Actions CI/CD.")
                 .font(.system(size: 11)).foregroundColor(Color(hex: "555555"))
                 .padding(.bottom, 20)
         }

@@ -5,11 +5,13 @@ import SwiftUI
 @main
 struct wOSApp: App {
     @StateObject private var systemState = SystemState()
+    @StateObject private var virtualMouse = VirtualMouseService()
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(systemState)
+                .environmentObject(virtualMouse)
                 .preferredColorScheme(.dark)
         }
     }

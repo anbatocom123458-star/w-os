@@ -6,8 +6,10 @@ import UIKit
 
 struct DesktopView: View {
     @EnvironmentObject var systemState: SystemState
+    @EnvironmentObject var virtualMouse: VirtualMouseService
     @State private var showShutdown = false
     @State private var appToDelete: RealApp?
+    @State private var showVirtualMouse = false
 
     private let columns = [GridItem(.adaptive(minimum: 70, maximum: 90), spacing: 18)]
 
@@ -34,12 +36,28 @@ struct DesktopView: View {
                 }
 
                 dock
+                virtualMouseToggle
             }
 
             ForEach(systemState.windows.filter { !$0.minimized }) { win in
                 WindowView(window: win)
             }
+
+            if showVirtualMouse {
+                VirtualMouseView(
+                    mouse: virtualMouse,
+                    onClose: { showVirtualMouse = false },
+                    onPointerAction: {
+                        if let front = systemState.frontWindowId {
+                            systemState.bringToFront(front)
+                        }
+                    }
+                )
+                .transition(.opacity)
+                .zIndex(30000)
+            }
         }
+        .animation(.easeInOut(duration: 0.3), value: showVirtualMouse)
         .confirmationDialog("Tùy chọn nguồn", isPresented: $showShutdown, titleVisibility: .visible) {
             Button("Khóa máy") { systemState.screen = .lock }
             Button("Khởi động lại") { systemState.rebootThenDesktop() }
@@ -104,5 +122,24 @@ struct DesktopView: View {
         .padding(.horizontal, 18)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 26))
         .padding(.bottom, 18)
+    }
+
+    private var virtualMouseToggle: some View {
+        HStack {
+            Spacer()
+            Button(action: { showVirtualMouse.toggle() }) {
+                Image(systemName: virtualMouse.isEnabled ? "mouse.fill" : "mouse")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(width: 44, height: 44)
+                    .background(virtualMouse.isEnabled ? Color.wosAccent : Color.wosPanelAlt)
+                    .cornerRadius(12)
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.wosBorder))
+            }
+            .accessibilityLabel(virtualMouse.isEnabled ? "Tắt chuột ảo" : "Bật chuột ảo")
+            .accessibilityHint(virtualMouse.isEnabled ? "Con trỏ đang hoạt động" : "Hiển thị con trỏ chuột ảo trên màn hình")
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
     }
 }

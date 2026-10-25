@@ -1,0 +1,220 @@
+name: Release — signed IPA export (optional, secret-gated)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      export_method:
+        description: 'Export method'
+        required: false
+        default: 'app-store'
+        type: choice
+        options: [app-store, ad-hoc, enterprise, development]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  XCODE_PROJECT: wOS.xcodeproj
+  XCODE_SCHEME: wOS
+  DERIVED_DATA: ${{ runner.temp }}/DerivedData
+  KEYCHAIN_PATH: ${{ runner.temp }}/signing.keychain
+
+jobs:
+  prepare:
+    name: Check signing secrets availability
+    runs-on: macos-15
+    timeout-minutes: 10
+    outputs:
+      signing_available: ${{ steps.check.outputs.available }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for signing secrets (never prints secret values)
+  unsigned-build:
+    name: Unsigned device build (validation artifact)
+    needs: prepare
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project from project.yml
+        run: xcodegen generate
+
+      - name: Build for generic iOS device (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -configuration Release \
+            -derivedDataPath "$DERIVED_DATA/release" \
+            CODE_SIGNING_ALLOWED=NO \
+            ONLY_ACTIVE_ARCH=NO \
+            2>&1 | tee "${{ runner.temp }}/build-release.log"
+
+      - name: Package unsigned device .app
+        run: |
+          APP_PATH=$(find "$DERIVED_DATA/release" -name '*.app' -maxdepth 8 | head -1)
+          if [ -z "$APP_PATH" ]; then echo "No release .app bundle was produced" >&2; exit 1; fi
+          ditto -c -k --keepParent "$APP_PATH" "${{ runner.temp }}/wOS-unsigned-release-app.zip"
+          unzip -t "${{ runner.temp }}/wOS-unsigned-release-app.zip" >/dev/null
+
+      - name: Upload unsigned release build artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wOS-unsigned-release-app
+          path: |
+            ${{ runner.temp }}/wOS-unsigned-release-app.zip
+            ${{ runner.temp }}/build-release.log
+          retention-days: 30
+          if-no-files-found: error
+
+  signed-ipa:
+    name: Signed IPA export
+    needs: prepare
+    if: needs.prepare.outputs.signing_available == 'true'
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project from project.yml
+        run: xcodegen generate
+
+      - name: Create temporary keychain
+        run: |
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+          echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+      - name: Import code-signing certificate (values never logged)
+        run: |
+          echo "${{ secrets.IOS_SIGNING_CERTIFICATE }}" | base64 -D > "${{ runner.temp }}/certificate.p12"
+          security import "${{ runner.temp }}/certificate.p12" \
+            -k "$KEYCHAIN_PATH" \
+            -P "${{ secrets.IOS_SIGNING_CERTIFICATE_PASSWORD }}" \
+            -T /usr/bin/codesign -T /usr/bin/productbuild -T /usr/bin/xcodebuild
+          rm -f "${{ runner.temp }}/certificate.p12"
+
+      - name: Install provisioning profile
+        run: |
+          echo "${{ secrets.IOS_PROVISIONING_PROFILE }}" | base64 -D > "${{ runner.temp }}/profile.mobileprovision"
+          PROFILE_LIB="${HOME}/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILE_LIB"
+          cp "${{ runner.temp }}/profile.mobileprovision" "$PROFILE_LIB/"
+          rm -f "${{ runner.temp }}/profile.mobileprovision"
+          PROFILE_PLIST=$(ls -t "$PROFILE_LIB"/*.mobileprovision | head -1)
+          echo "PROFILE_PLIST=$PROFILE_PLIST" >> "$GITHUB_ENV"
+          /usr/libexec/PlistBuddy -c 'Print :TeamIdentifier' "$PROFILE_PLIST" | awk 'NR==2{gsub(/^ */,""); print}' | head -1 > "${{ runner.temp }}/teamid.txt" || true
+          echo "TEAM_ID=$(cat ${{ runner.temp }}/teamid.txt)" >> "$GITHUB_ENV"
+          /usr/libexec/PlistBuddy -c 'Print :UUID' "$PROFILE_PLIST" > "${{ runner.temp }}/profileuuid.txt"
+          echo "PROVISIONING_PROFILE_SPECIFIER=$(cat ${{ runner.temp }}/profileuuid.txt)" >> "$GITHUB_ENV"
+
+      - name: Validate signing identity and profile compatibility
+        run: |
+          echo "Identities in keychain:"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+          echo "Team ID: $TEAM_ID"
+          echo "Provisioning profile specifier: $PROVISIONING_PROFILE_SPECIFIER"
+          test -n "$TEAM_ID" || { echo "Could not read Team ID from provisioning profile" >&2; exit 1; }
+          test -n "$PROVISIONING_PROFILE_SPECIFIER" || { echo "Could not read profile UUID" >&2; exit 1; }
+
+      - name: Write export options plist
+        run: |
+          EXPORT_METHOD="${{ github.event.inputs.export_method || 'app-store' }}"
+          cat > "${{ runner.temp }}/ExportOptions.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key><string>APP_METHOD_PLACEHOLDER</string>
+              <key>teamID</key><string>APP_TEAM_ID_PLACEHOLDER</string>
+              <key>uploadSymbols</key><true/>
+              <key>compileBitcode</key><false/>
+          </dict>
+          </plist>
+          PLIST
+          sed -i '' "s/APP_METHOD_PLACEHOLDER/$EXPORT_METHOD/" "${{ runner.temp }}/ExportOptions.plist"
+          sed -i '' "s/APP_TEAM_ID_PLACEHOLDER/$TEAM_ID/" "${{ runner.temp }}/ExportOptions.plist"
+
+      - name: Archive and export signed IPA
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -configuration Release \
+            -archivePath "${DERIVED_DATA}/wOS.xcarchive" \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROVISIONING_PROFILE_SPECIFIER" \
+            2>&1 | tee "${{ runner.temp }}/archive.log"
+
+          xcodebuild -exportArchive \
+            -archivePath "${DERIVED_DATA}/wOS.xcarchive" \
+            -exportPath "${{ runner.temp }}/export" \
+            -exportOptionsPlist "${{ runner.temp }}/ExportOptions.plist" \
+            2>&1 | tee "${{ runner.temp }}/export.log"
+
+      - name: Validate signed artifact
+        run: |
+          IPA_PATH=$(find "${{ runner.temp }}/export" -name '*.ipa' -maxdepth 2 | head -1)
+          if [ -z "$IPA_PATH" ]; then echo "No .ipa was produced by exportArchive" >&2; exit 1; fi
+          echo "IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
+          unzip -l "$IPA_PATH"
+          APP_PATH=$(unzip -l "$IPA_PATH" | awk '/Payload\/.*\.app\/$/ {print $4; exit}')
+          unzip -o -q "$IPA_PATH" -d "${{ runner.temp }}/ipa-payload"
+          codesign --verify --verbose=4 "${{ runner.temp }}/ipa-payload/$APP_PATH"
+          echo "Signed IPA signature verified"
+
+      - name: Upload signed IPA artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wOS-signed-ipa
+          path: |
+            ${{ env.IPA_PATH }}
+            ${{ runner.temp }}/archive.log
+            ${{ runner.temp }}/export.log
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Delete temporary keychain (cleanup)
+        if: always()
+        run: |
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+
+        id: check
+        run: |
+          if [ -z "${{ secrets.IOS_SIGNING_CERTIFICATE }}" ] \
+             || [ -z "${{ secrets.IOS_SIGNING_CERTIFICATE_PASSWORD }}" ] \
+             || [ -z "${{ secrets.IOS_PROVISIONING_PROFILE }}" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Signing secrets not fully configured — signed IPA job will be skipped."
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "Signing secrets configured — signed IPA job will run."
+          fi

@@ -20,7 +20,7 @@ struct CalendarAppView: View {
     }
 
     private var daysInMonth: Int {
-        let range = Calendar.current.range(of: .day, in: .month, for: dateFor(day: 1))!
+        guard let range = Calendar.current.range(of: .day, in: .month, for: dateFor(day: 1)) else { return 0 }
         return range.count
     }
 
