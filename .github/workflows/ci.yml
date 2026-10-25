@@ -18,7 +18,6 @@ env:
   XCODE_PROJECT: wOS.xcodeproj
   XCODE_SCHEME: wOS
   TEST_SCHEME: wOSTests
-  DERIVED_DATA: ${{ runner.temp }}/DerivedData
 
 jobs:
   ci:
@@ -26,6 +25,10 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 60
     steps:
+      - name: Set environment variables
+        run: |
+          echo "DERIVED_DATA=$RUNNER_TEMP/DerivedData" >> "$GITHUB_ENV"
+
       - name: Checkout repository
         uses: actions/checkout@v4
 

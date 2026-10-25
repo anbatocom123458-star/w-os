@@ -22,8 +22,6 @@ permissions:
 env:
   XCODE_PROJECT: wOS.xcodeproj
   XCODE_SCHEME: wOS
-  DERIVED_DATA: ${{ runner.temp }}/DerivedData
-  KEYCHAIN_PATH: ${{ runner.temp }}/signing.keychain
 
 jobs:
   prepare:
@@ -33,16 +31,37 @@ jobs:
     outputs:
       signing_available: ${{ steps.check.outputs.available }}
     steps:
+      - name: Set environment variables
+        run: |
+          echo "DERIVED_DATA=$RUNNER_TEMP/DerivedData" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain" >> "$GITHUB_ENV"
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Check for signing secrets (never prints secret values)
+        id: check
+        run: |
+          if [ -z "${{ secrets.IOS_SIGNING_CERTIFICATE }}" ] \
+             || [ -z "${{ secrets.IOS_SIGNING_CERTIFICATE_PASSWORD }}" ] \
+             || [ -z "${{ secrets.IOS_PROVISIONING_PROFILE }}" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Signing secrets not fully configured — signed IPA job will be skipped."
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "Signing secrets configured — signed IPA job will run."
+          fi
   unsigned-build:
     name: Unsigned device build (validation artifact)
     needs: prepare
     runs-on: macos-15
     timeout-minutes: 60
     steps:
+      - name: Set environment variables
+        run: |
+          echo "DERIVED_DATA=$RUNNER_TEMP/DerivedData" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain" >> "$GITHUB_ENV"
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -91,6 +110,11 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 60
     steps:
+      - name: Set environment variables
+        run: |
+          echo "DERIVED_DATA=$RUNNER_TEMP/DerivedData" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain" >> "$GITHUB_ENV"
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
