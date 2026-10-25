@@ -5,6 +5,7 @@
 // operations with real errors, nothing simulated.
 import SwiftUI
 import UniformTypeIdentifiers
+import Foundation
 
 private let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
 

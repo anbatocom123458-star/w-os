@@ -1,22 +1,10 @@
 // ZipImportService.swift
 // Safe ZIP archive inspection and extraction (Phase 5 / Phase 7 foundation).
-//
-// W OS does not bundle a third-party ZIP library. This service parses the ZIP
-// structure directly (End of Central Directory + Central Directory) to:
-//   * list entries with sizes and compression methods,
-//   * reject path traversal and absolute paths before anything is written,
-//   * extract only uncompressed ("stored") entries into the app container,
-//   * report deflated entries as unsupported with a clear error instead of a
-//   fake progress bar.
-//
-// Nothing here executes code, touches SpringBoard, or leaves the device.
 import Foundation
 
-/// One ZIP entry as declared by the central directory.
 struct ZipEntry: Identifiable {
     let id = UUID()
     let name: String
-    /// Compression method: 0 = stored (no compression), 8 = deflated.
     let method: UInt16
     let compressedSize: UInt64
     let uncompressedSize: UInt64
@@ -49,14 +37,13 @@ enum ZipImportError: LocalizedError {
 }
 
 private enum ZipSignature: UInt32 {
-    case localFileHeader = 0x04034b50   // "PK\x03\x04"
-    case centralDirectory  = 0x02014b50   // "PK\x01\x02"
-    case endOfCentralDirectory = 0x06054b50 // "PK\x05\x06"
+    case localFileHeader = 0x04034b50
+    case centralDirectory  = 0x02014b50
+    case endOfCentralDirectory = 0x06054b50
 }
 
 final class ZipImportService {
 
-    /// Inspects a ZIP archive without extracting anything.
     func inspectArchive(at url: URL) -> Result<[ZipEntry], ZipImportError> {
         guard let data = try? Data(contentsOf: url) else {
             return .failure(.cannotReadArchive)
@@ -84,11 +71,13 @@ final class ZipImportService {
             guard nameEnd <= data.count else { return .failure(.cannotReadArchive) }
             let name = String(data: data[offset + 46 ..< nameEnd], encoding: .utf8) ?? ""
 
-            entries.append(ZipEntry(name: name, method: method,
-                                    compressedSize: compressedSize, uncompressedSize: uncompressedSize))
-    /// Extracts the archive into `destination`. Rejects path traversal first,
-    /// then extracts only "stored" (uncompressed) entries; deflated entries
-    /// cause a clear `unsupportedCompression` error — nothing is faked.
+            entries.append(ZipEntry(name: name, method: UInt16(method), compressedSize: compressedSize, uncompressedSize: uncompressedSize))
+            offset = nameEnd + Int(readUInt16LE(data, at: offset + 30) ?? 0)
+        }
+
+        return .success(entries)
+    }
+
     func extractArchive(at url: URL, to destination: URL) -> Result<[URL], ZipImportError> {
         guard let data = try? Data(contentsOf: url) else {
             return .failure(.cannotReadArchive)
@@ -124,7 +113,8 @@ final class ZipImportService {
             if hasPathTraversal(name) { traversal.append(name) }
             if method == 8 { deflated.append(name) }
 
-            entries.append((name, method, compressedSize, localHeaderOffset, nameLen, extraLen))
+            entries.append((name: name, method: UInt16(method), compressedSize: compressedSize,
+                            localHeaderOffset: localHeaderOffset, nameLen: nameLen, extraLen: extraLen))
             offset = nameEnd + extraLen + Int(readUInt16LE(data, at: offset + 32) ?? 0)
         }
 
@@ -155,7 +145,7 @@ final class ZipImportService {
         return .success(extracted)
     }
 
-    // MARK: - Private
+    // MARK: - Private helpers
 
     private func findEndOfCentralDirectory(in data: Data) -> Int? {
         let eocdSig = Data([0x50, 0x4b, 0x05, 0x06])
@@ -187,9 +177,3 @@ final class ZipImportService {
             | UInt64(data[offset + 2]) << 16 | UInt64(data[offset + 3]) << 24
     }
 }
-
-            offset = nameEnd + Int(readUInt16LE(data, at: offset + 30) ?? 0)
-        }
-
-        return .success(entries)
-    }

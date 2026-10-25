@@ -35,7 +35,7 @@ struct WindowView: View {
             DragGesture()
                 .onChanged { value in
                     guard !window.maximized else { return }
-                    dragOffset = $0.translation
+                    dragOffset = value.translation
                 }
                 .onEnded { value in
                     guard !window.maximized else { return }
